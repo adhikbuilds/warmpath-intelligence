@@ -38,13 +38,24 @@ from scheduler import start_scheduler, stop_scheduler
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    from database import init_db
+    try:
+        from database import init_db
+        init_db()
+    except Exception as e:
+        print(f"[startup] DB init failed (non-fatal): {e}")
 
-    init_db()
-    start_scheduler()
-    print("WarmPath intelligence service starting up")
+    try:
+        start_scheduler()
+    except Exception as e:
+        print(f"[startup] Scheduler failed (non-fatal): {e}")
+
+    print("WarmPath intelligence service started")
     yield
-    stop_scheduler()
+
+    try:
+        stop_scheduler()
+    except Exception:
+        pass
     print("WarmPath intelligence service shutting down")
 
 
