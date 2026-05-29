@@ -1,0 +1,72 @@
+name: Deploy intelligence service to Azure Container Apps
+
+# Builds the FastAPI image, pushes it to GitHub Container Registry (free — uses
+# the built-in GITHUB_TOKEN), then deploys to Azure Container Apps (free grant,
+# scale-to-zero).
+#
+# Required repo secret:
+#   AZURE_CREDENTIALS  — output of:
+#     az ad sp create-for-rbac --name warmpath-deploy --role contributor \
+#       --scopes /subscriptions/<SUB_ID>/resourceGroups/warmpath-rg --json-auth
+#
+# Required app settings (set once on the container app, not in git):
+#   DATABASE_URL, SERVICE_SECRET, AI_PROVIDER, and the AI provider's keys.
+
+on:
+  push:
+    branches: [develop]
+    paths-ignore:
+      - "**/*.md"
+  workflow_dispatch:
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+  RESOURCE_GROUP: warmpath-rg
+  LOCATION: centralindia
+  APP_NAME: warmpath-intelligence
+  CONTAINER_ENV: warmpath-env
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ env.IMAGE }}:${{ github.sha }},${{ env.IMAGE }}:latest
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy to Container Apps
+        uses: azure/cli@v2
+        with:
+          azcliversion: latest
+          inlineScript: |
+            az extension add --name containerapp --upgrade --only-show-errors
+            az containerapp up \
+              --name "$APP_NAME" \
+              --resource-group "$RESOURCE_GROUP" \
+              --location "$LOCATION" \
+              --environment "$CONTAINER_ENV" \
+              --image "$IMAGE:${{ github.sha }}" \
+              --target-port 8001 \
+              --ingress external \
+              --min-replicas 0 \
+              --query properties.configuration.ingress.fqdn
